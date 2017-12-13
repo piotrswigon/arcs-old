@@ -5,8 +5,8 @@
 // subject to an additional IP rights grant found at
 // http://polymer.github.io/PATENTS.txt
 
-var assert = require('assert');
-var util = require('./util.js');
+import assert from '../../platform/assert-web.js';
+import util from './util.js';
 
 class ViewConnection {
   constructor(name, particle) {
@@ -95,8 +95,12 @@ class ViewConnection {
     return this.particle.spec.connectionMap.get(this.name);
   }
 
+  get isOptional() {
+    return this.spec.isOptional;
+  }
+
   _isValid() {
-    if (this.direction && !['in', 'out', 'inout'].includes(this.direction)) {
+    if (this.direction && !['in', 'out', 'inout', 'host'].includes(this.direction)) {
       return false;
     }
     if (this.type && this.particle && this.particle.spec) {
@@ -116,6 +120,11 @@ class ViewConnection {
 
   isResolved(options) {
     assert(Object.isFrozen(this));
+
+    if (this.isOptional) {
+      return true;
+    }
+
     // TODO: This should use this._type, or possibly not consider type at all.
     if (!this.type) {
       if (options) {
@@ -170,4 +179,4 @@ class ViewConnection {
   }
 }
 
-module.exports = ViewConnection;
+export default ViewConnection;

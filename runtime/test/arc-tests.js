@@ -7,21 +7,20 @@
  * subject to an additional IP rights grant found at
  * http://polymer.github.io/PATENTS.txt
  */
-"use strict";
 
-const Arc = require("../arc.js");
-const assert = require('chai').assert;
-const SlotComposer = require('../slot-composer.js');
-const util = require('./test-util.js');
-const viewlet = require('../viewlet.js');
-const Manifest = require('../manifest.js');
+import Arc from '../arc.js';
+import {assert} from './chai-web.js';
+import SlotComposer from '../slot-composer.js';
+import * as util from './test-util.js';
+import handle from '../handle.js';
+import Manifest from '../manifest.js';
+import Loader from '../loader.js';
 
-
-let loader = new (require('../loader'));
+let loader = new Loader();
 
 async function setup() {
   let manifest = await Manifest.parse(`
-    import '../particles/test/test-particles.manifest'
+    import './particles/test/test-particles.manifest'
     recipe TestRecipe
       use 'test:1' as view0
       use 'test:2' as view1
@@ -43,9 +42,9 @@ describe('Arc', function() {
     let arc = new Arc({slotComposer, id:'test'});
     let fooView = arc.createView(Foo.type);
     let barView = arc.createView(Bar.type);
-    viewlet.viewletFor(fooView).set(new Foo({value: 'a Foo'}));
+    await handle.handleFor(fooView).set(new Foo({value: 'a Foo'}));
     recipe.normalize();
-    arc.instantiate(recipe);
+    await arc.instantiate(recipe);
     await util.assertSingletonWillChangeTo(barView, Bar, "a Foo1");
   });
 
@@ -55,9 +54,10 @@ describe('Arc', function() {
     let fooView = arc.createView(Foo.type);
     let barView = arc.createView(Bar.type);
     recipe.normalize();
-    arc.instantiate(recipe);
+    await arc.instantiate(recipe);
 
-    viewlet.viewletFor(fooView).set(new Foo({value: 'a Foo'}));
+    handle.handleFor(fooView).set(new Foo({value: 'a Foo'}));
     await util.assertSingletonWillChangeTo(barView, Bar, "a Foo1");
   });
+
 });

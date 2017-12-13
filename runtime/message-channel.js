@@ -43,14 +43,18 @@ class MessageChannel {
     this._ports = [this.port1, this.port2];
   }
 
-  _post(id, message) {
+  async _post(id, message) {
     message = JSON.parse(JSON.stringify(message));
-    Promise.resolve().then(() => {
-      if (this._ports[id]._onmessage) {
-        this._ports[id]._onmessage(new MessageEvent(message));
+    if (this._ports[id]._onmessage) {
+      try {
+        // Yield so that we deliver the message asynchronously.
+        await 0;
+        await this._ports[id]._onmessage(new MessageEvent(message));
+      } catch (e) {
+        console.error("Exception in particle code\n", e);
       }
-    });
+    }
   }
 }
 
-module.exports = MessageChannel;
+export default MessageChannel;

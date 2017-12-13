@@ -8,10 +8,10 @@
  * http://polymer.github.io/PATENTS.txt
  */
 
-const assert = require('chai').assert;
-const Shape = require('../shape.js');
-const Type = require('../type.js');
-const Manifest = require('../manifest.js');
+import {assert} from './chai-web.js';
+import Shape from '../shape.js';
+import Type from '../type.js';
+import Manifest from '../manifest.js';
 
 
 describe('shape', function() {
@@ -19,14 +19,14 @@ describe('shape', function() {
     var shape = new Shape([{type: Type.newVariableReference('a')}], []);
     assert.equal(shape._typeVars.length, 1);
     assert(shape._typeVars[0].field == 'type');
-    assert(shape._typeVars[0].object[shape._typeVars[0].field].variableReferenceName == 'a');
+    assert(shape._typeVars[0].object[shape._typeVars[0].field].variableReference == 'a');
   });
 
   it('finds type variable references in slots', function() {
     var shape = new Shape([], [{name: Type.newVariableReference('a')}]);
     assert.equal(shape._typeVars.length, 1);
     assert(shape._typeVars[0].field == 'name');
-    assert(shape._typeVars[0].object[shape._typeVars[0].field].variableReferenceName == 'a');
+    assert(shape._typeVars[0].object[shape._typeVars[0].field].variableReference == 'a');
   });
 
   it('upgrades type variable references', function() {
@@ -34,20 +34,20 @@ describe('shape', function() {
       [
         {name: Type.newVariableReference('a')},
         {type: Type.newVariableReference('b'), name: 'singleton'},
-        {type: Type.newVariableReference('b').viewOf(), name: 'set'}
+        {type: Type.newVariableReference('b').setViewOf(), name: 'set'}
       ],
       [
         {name: Type.newVariableReference('a')},
       ]);
     assert.equal(shape._typeVars.length, 4);
-    var type = Type.newShape(shape);
+    var type = Type.newInterface(shape);
     var map = new Map();
     type = type.assignVariableIds(map);
     assert(map.has('a'));
     assert(map.has('b'));
-    shape = type.shapeShape;
+    shape = type.interfaceShape;
     assert(shape.views[0].name.variableId == shape.slots[0].name.variableId);
-    assert(shape.views[1].type.variableId == shape.views[2].type.viewType.variableId);
+    assert(shape.views[1].type.variableId == shape.views[2].type.setViewType.variableId);
   });
 
   it('matches particleSpecs', async () => {
@@ -67,7 +67,7 @@ describe('shape', function() {
         particle S
           S(in NotTest bar, out Test far, out NotTest foo)
       `);
-      let type = Type.newEntity(manifest.schemas.Test.toLiteral());
+      let type = Type.newEntity(manifest.schemas.Test);
       var shape = new Shape([{name: 'foo'}, {direction: 'in'}, {type}], []);
       assert(!shape._particleMatches(manifest.particles[0]));
       assert(shape._particleMatches(manifest.particles[1]));

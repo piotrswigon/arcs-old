@@ -5,9 +5,9 @@
 // subject to an additional IP rights grant found at
 // http://polymer.github.io/PATENTS.txt
 
-var assert = require('assert');
-var util = require('./util.js');
-var TypeChecker = require('./type-checker.js');
+import assert from '../../platform/assert-web.js';
+import util from './util.js';
+import TypeChecker from './type-checker.js';
 
 class View {
   constructor(recipe) {
@@ -73,7 +73,7 @@ class View {
   // a resolved View has either an id or create=true
   get fate() { return this._fate || "?"; }
   set fate(fate) {
-    if (!this._originalFate) {
+    if (this._originalFate == null) {
       this._originalFate = this._fate;
     }
     this._fate = fate;
@@ -175,4 +175,4 @@ class View {
   }
 }
 
-module.exports = View;
+export default View;

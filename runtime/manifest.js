@@ -8,14 +8,16 @@
  * http://polymer.github.io/PATENTS.txt
  */
 
-const assert = require('assert');
-const parser = require('./build/manifest-parser.js');
-const Recipe = require('./recipe/recipe.js');
-const ParticleSpec = require('./particle-spec.js');
-const Schema = require('./schema.js');
-const Search = require('./recipe/search.js');
-const {View, Variable} = require('./view.js');
-const util = require('./recipe/util.js');
+import assert from '../platform/assert-web.js';
+import parser from './build/manifest-parser.js';
+import Recipe from './recipe/recipe.js';
+import ParticleSpec from './particle-spec.js';
+import Schema from './schema.js';
+import Search from './recipe/search.js';
+import Shape from './shape.js';
+import Type from './type.js';
+import util from './recipe/util.js';
+import StorageProviderFactory from './storage-provider-factory.js';
 
 class Manifest {
   constructor() {
@@ -25,10 +27,12 @@ class Manifest {
     this._particles = {};
     this._schemas = {};
     this._views = [];
+    this._shapes = [];
     this._viewTags = new Map();
     this._fileName = null;
     this._nextLocalID = 0;
     this._id = null;
+    this._storageProviderFactory = new StorageProviderFactory(this);
   }
   get id() {
     return this._id;
@@ -51,15 +55,16 @@ class Manifest {
   get views() {
     return this._views;
   }
+
+  get shapes() {
+    return this._shapes;
+  }
+
   // TODO: newParticle, Schema, etc.
   // TODO: simplify() / isValid().
   newView(type, name, id, tags) {
-    let view;
-    if (type.isView) {
-      view = new View(type, this, name, id);
-    } else {
-      view = new Variable(type, this, name, id);
-    }
+    let view = this._storageProviderFactory.construct(id, type, 'in-memory');
+    view.name = name;
     this._views.push(view);
     this._viewTags.set(view, tags ? tags : []);
     return view;
@@ -85,6 +90,15 @@ class Manifest {
   findSchemaByName(name) {
     return this._find(manifest => manifest._schemas[name]);
   }
+  findTypeByName(name) {
+    let schema = this.findSchemaByName(name);
+    if (schema)
+      return Type.newEntity(schema);
+    let shape = this.findShapeByName(name);
+    if (shape)
+      return Type.newInterface(shape);
+    return null;
+  }
   findParticleByName(name) {
     return this._find(manifest => manifest._particles[name]);
   }
@@ -100,6 +114,9 @@ class Manifest {
   findViewsByType(type, options) {
     var tags = options && options.tags ? options.tags : [];
     return [...this._findAll(manifest => manifest._views.filter(view => view.type.equals(type) && tags.filter(tag => !manifest._viewTags.get(view).includes(tag)).length == 0))];
+  }
+  findShapeByName(name) {
+    return this._find(manifest => manifest._shapes.find(shape => shape.name == name));
   }
   generateID() {
     return `${this.id}:${this._nextLocalID++}`;
@@ -168,11 +185,6 @@ ${e.message}
     manifest._fileName = fileName;
     manifest._id = id;
 
-    // TODO: This should be written to process in dependency order.
-    // 1. imports
-    // 2. schemas
-    // 3. particles, TODO: entities => views
-    // 4. recipes
     for (let item of items.filter(item => item.kind == 'import')) {
       let path = loader.path(manifest.fileName);
       let target = loader.join(path, item.path);
@@ -182,6 +194,9 @@ ${e.message}
     try {
       for (let item of items.filter(item => item.kind == 'schema')) {
         this._processSchema(manifest, item);
+      }
+      for (let item of items.filter(item => item.kind == 'shape')) {
+        this._processShape(manifest, item);
       }
       for (let item of items.filter(item => item.kind == 'particle')) {
         this._processParticle(manifest, item, loader);
@@ -198,31 +213,80 @@ ${e.message}
     return manifest;
   }
   static _processSchema(manifest, schemaItem) {
-    var parents = [];
-    for (let parent of schemaItem.parents) {
-      parent = manifest.findSchemaByName(parent);
-      assert(parent);
-      parents.push(parent.toLiteral());
-    }
-    schemaItem.parents = parents;
-    manifest._schemas[schemaItem.name] = new Schema(schemaItem);
+    manifest._schemas[schemaItem.name] = new Schema({
+      name: schemaItem.name,
+      parents: schemaItem.parents.map(parent => {
+        let result = manifest.findSchemaByName(parent);
+        assert(result);
+        return result.toLiteral();
+      }),
+      sections: schemaItem.sections.map(section => {
+        let fields = {};
+        for (let field of section.fields) {
+          fields[field.name] = field.type;
+        }
+        return {
+          sectionType: section.sectionType,
+          fields,
+        };
+      }),
+    });
   }
   static _processParticle(manifest, particleItem, loader) {
+    // TODO: we should require both of these and update failing tests...
     assert(particleItem.implFile == null || particleItem.args !== null, "no valid body defined for this particle");
+    if (!particleItem.args) {
+      particleItem.args = [];
+    }
     // TODO: loader should not be optional.
     if (particleItem.implFile && loader) {
       particleItem.implFile = loader.join(manifest.fileName, particleItem.implFile);
     }
 
-    let resolveSchema = name => {
-      let schema = manifest.findSchemaByName(name);
-      if (!schema) {
-        throw new Error(`Schema '${name}' was not declared or imported`);
-      }
-      return schema;
-    };
-    let particleSpec = new ParticleSpec(particleItem, resolveSchema);
+    for (let arg of particleItem.args) {
+      arg.type = Manifest._processType(arg.type);
+      arg.type = arg.type.resolveReferences(name => manifest.resolveReference(name));
+    }
+
+    let particleSpec = new ParticleSpec(particleItem);
     manifest._particles[particleItem.name] = particleSpec;
+  }
+  // TODO: Move this to a generic pass over the AST and merge with resolveReference.
+  static _processType(typeItem) {
+    switch (typeItem.kind) {
+      case 'variable-type':
+        return Type.newVariableReference(typeItem.name);
+      case 'reference-type':
+        return Type.newManifestReference(typeItem.name);
+      case 'list-type':
+        return Type.newSetView(Manifest._processType(typeItem.type));
+      default:
+        throw `Unexpected type item of kind '${typeItem.kind}'`;
+    }
+  }
+  static _processShape(manifest, shapeItem) {
+    for (let arg of shapeItem.interface.args) {
+      arg.type = Manifest._processType(arg.type);
+      arg.type = arg.type.resolveReferences(name => manifest.resolveReference(name));
+    }
+    let views = shapeItem.interface.args;
+    let slots = [];
+    for (let slotItem of shapeItem.slots) {
+      slots.push({
+        direction: 'consume',
+        name: slotItem.name,
+      });
+      for (let providedSlotItem of slotItem.providedSlots) {
+        slots.push({
+          direction: 'provide',
+          name: providedSlotItem.name,
+        })
+      }
+    }
+    // TODO: move shape to recipe/ and add shape builder?
+    let shape = new Shape(views, slots);
+    shape.name = shapeItem.name;
+    manifest._shapes.push(shape);
   }
   static _processRecipe(manifest, recipeItem) {
     let recipe = manifest._newRecipe(recipeItem.name);
@@ -253,15 +317,16 @@ ${e.message}
 
     for (let item of items.views) {
       let view = recipe.newView();
-      if (item.ref.id) {
-        view.id = item.ref.id;
-      } else if (item.ref.name) {
-        let targetView = manifest.findViewByName(item.ref.name);
+      let ref = item.ref || {tags: []};
+      if (ref.id) {
+        view.id = ref.id;
+      } else if (ref.name) {
+        let targetView = manifest.findViewByName(ref.name);
         // TODO: Error handling.
-        assert(targetView, `Could not find view ${item.ref.name}`);
+        assert(targetView, `Could not find view ${ref.name}`);
         view.mapToView(targetView);
       }
-      view.tags = item.ref.tags;
+      view.tags = ref.tags;
       if (item.name) {
         assert(!items.byName.has(item.name));
         view.localName = item.name;
@@ -376,10 +441,22 @@ ${e.message}
           }
         }
 
+        // Handle implicit view connections in the form `param = SomeParticle`
         if (connectionItem.target && connectionItem.target.particle) {
-          targetParticle = particlesByName[connectionItem.target.particle];
-          // TODO: error reporting
-          assert(targetParticle);
+          let particle = manifest.findParticleByName(connectionItem.target.particle);
+          if (!particle) {
+            let error = new Error(`Could not find particle '${connectionItem.target.particle}'`);
+            error.location = connectionItem.target.location;
+            throw error;
+          }
+          // TODO: Better ID.
+          let id = `${manifest._id}immediate${particle.name}`
+          // TODO: Mark as immediate.
+          targetView = recipe.newView();
+          targetView.fate = 'map';
+          var view = manifest.newView(connection.type, null, id, []);
+          view.set(particle.toLiteral());
+          targetView.mapToView(view);
         }
 
         if (targetParticle) {
@@ -427,10 +504,21 @@ ${e.message}
       }
     }
   }
+  resolveReference(name) {
+    let schema = this.findSchemaByName(name);
+    if (schema) {
+      return {schema};
+    }
+    let shape = this.findShapeByName(name);
+    if (shape) {
+      return {shape};
+    }
+    throw new Error(`Schema or Shape '${name}' was not declared or imported`);
+  }
   static async _processView(manifest, item, loader) {
     let name = item.name;
     let id = item.id;
-    let type = item.type;
+    let type = Manifest._processType(item.type);
     if (id == null) {
       id = `${manifest._id}view${manifest._views.length}`
     }
@@ -438,15 +526,7 @@ ${e.message}
     if (tags == null)
       tags = [];
 
-    // TODO: make this a util?
-    let resolveSchema = name => {
-      let schema = manifest.findSchemaByName(name);
-      if (!schema) {
-        throw new Error(`Schema '${name}' was not declared or imported`);
-      }
-      return schema;
-    };
-    type = type.resolveSchemas(resolveSchema);
+    type = type.resolveReferences(name => manifest.resolveReference(name));
 
     let view = manifest.newView(type, name, id, tags);
     view.source = item.source;
@@ -460,7 +540,7 @@ ${e.message}
     for (let entity of entities) {
       let id = entity.$id || manifest.generateID();
       delete entity.$id;
-      if (type.isView) {
+      if (type.isSetView) {
         view.store({
           id,
           rawData: entity,
@@ -516,4 +596,4 @@ ${e.message}
   }
 }
 
-module.exports = Manifest;
+export default Manifest;

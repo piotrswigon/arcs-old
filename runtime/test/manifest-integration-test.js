@@ -10,17 +10,18 @@
 
 "use strict";
 
-const assert = require('chai').assert;
-const Arc = require("../arc.js");
-const Loader = require("../loader.js");
-const Manifest = require('../manifest.js');
-const Viewlet = require('../viewlet.js');
-const Schema = require('../schema.js');
+import {assert} from './chai-web.js';
+import Arc from "../arc.js";
+import Loader from "../loader.js";
+import Manifest from '../manifest.js';
+import handle from '../handle.js';
+import Schema from '../schema.js';
+import Speculator from '../speculator.js';
 
 async function setup() {
   let registry = {};
   let loader = new Loader();
-  let manifest = await Manifest.load('../particles/test/test.manifest', loader, registry);
+  let manifest = await Manifest.load('./particles/test/test.manifest', loader, registry);
   assert(manifest);
   let arc = new Arc({});
   let recipe = manifest.recipes[0];
@@ -32,20 +33,20 @@ async function setup() {
 describe('manifest integration', () => {
   it('can produce a recipe that can be instantiated in an arc', async () => {
     let {arc, recipe} = await setup();
-    arc.instantiate(recipe);
+    await arc.instantiate(recipe);
     await arc.pec.idle;
     let type = recipe.views[0].type;
     let [view] = arc.findViewsByType(type);
     assert(view);
-    let viewlet = Viewlet.viewletFor(view);
+    let theHandle = handle.handleFor(view);
     // TODO: This should not be necessary.
-    viewlet.entityClass = new Schema(type.entitySchema).entityClass();
-    let result = await viewlet.get();
+    theHandle.entityClass = type.entitySchema.entityClass();
+    let result = await theHandle.get();
     assert.equal(result.value, 'Hello, world!');
   });
   it('can produce a recipe that can be speculated', async () => {
     let {arc, recipe} = await setup();
-    let relevance = await new (require('../speculator.js'))().speculate(arc, recipe);
+    let relevance = await new Speculator().speculate(arc, recipe);
     assert.equal(relevance.calcRelevanceScore(), 1);
   });
 });

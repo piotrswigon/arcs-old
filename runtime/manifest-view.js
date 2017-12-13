@@ -7,7 +7,7 @@
 // http://polymer.github.io/PATENTS.txt
 'use strict';
 
-const assert = require('assert');
+import assert from '../platform/assert-web.js';
 
 class ManifestView {
   constructor() {
@@ -33,7 +33,7 @@ class ManifestView {
     return this._entities;
   }
   addEntity(entity) {
-    // This should be in the format used by Viewlet.
+    // This should be in the format used by Handle.
     assert(entity.rawData != null);
     this._entities.push(entity);
   }
@@ -50,4 +50,4 @@ class ManifestView {
   }
 }
 
-module.exports = ManifestView;
+export default ManifestView;

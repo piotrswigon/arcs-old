@@ -9,14 +9,15 @@
  */
 "use strict";
 
-const {
+import assert from '../platform/assert-web.js';
+import {
   Particle,
   ViewChanges,
   //StateChanges,
   //SlotChanges
-} = require("./particle.js");
+} from './particle.js';
 
-const XenStateMixin = require("./browser/lib/xen-state.js");
+import XenStateMixin from './browser/lib/xen-state.js';
 
 //let log = !global.document || (global.logging === false) ? () => {} : console.log.bind(console, `---------- DomParticle::`);
 //console.log(!!global.document, global.logging, log);
@@ -96,8 +97,13 @@ class DomParticle extends XenStateMixin(Particle) {
     this._setState({});
   }
   _update(props, state) {
-    this.config.slotNames.forEach(s => this.render(s, ["model"]));
+    let shouldRender = this._shouldRender(this._props, this._state);
+    if (shouldRender) {  // TODO: should _shouldRender be slot specific?
+      this.config.slotNames.forEach(s => this.render(s, ["model"]));
+      this.relevance = 1;  // TODO: improve relevance signal.
+    }
   }
+
   render(slotName, contentTypes) {
     let slot = this.getSlot(slotName);
     if (!slot) {
@@ -117,6 +123,48 @@ class DomParticle extends XenStateMixin(Particle) {
       // Send empty object, to clear rendered slot contents.
       slot.render({});
     }
+  }
+
+  // TODO: renderHostedSlot and combineHostedContent are methods needed for transformation particle
+  // that renders UI. Consider adding a TransformationParticle base class.
+  renderHostedSlot(slotName, hostedSlotId, content) {
+    assert(this.hostedSlotBySlotId.has(hostedSlotId), `Missing model for slot ID ${hostedSlotId}`);
+    this.hostedSlotBySlotId.get(hostedSlotId).content = content;
+
+    let slot = this.getSlot(slotName);
+    if (slot) {
+      let combinedContent = this.combineHostedContent(Object.keys(content));
+
+      // TODO: group multiple calls together!
+      if (combinedContent) {
+        slot.render(combinedContent);
+      } else if (slot.isRendered) {
+        slot.render({});
+      }
+    }
+  }
+  // Groups all rendered contents produced by the hosted particles, and sets the subId in each model.
+  combineHostedContent(contentTypes) {
+    let result = {};
+    let includeModel = contentTypes.indexOf('model') >= 0;
+    let includeTemplate = contentTypes.indexOf('template') >= 0;
+    if (includeModel) {
+      result.model = {items: []};
+    }
+    for (let value of this.hostedSlotBySlotId.values()) {
+      let content = value.content;
+      if (!content) {
+        continue;
+      }
+      if (includeModel) {
+        result.model.items.push(Object.assign(content.model || {}, {subId: value.subId}));
+      }
+      if (includeTemplate && !result.template) {
+        // TODO: Currently using the first available template. Add support for multiple templates.
+        result.template = content.template;
+      }
+    }
+    return result;
   }
   _initializeRender(slot) {
     let template = this.getTemplate(slot.slotName);
@@ -140,4 +188,4 @@ class DomParticle extends XenStateMixin(Particle) {
   }
 }
 
-module.exports = DomParticle;
+export default DomParticle;

@@ -8,11 +8,22 @@
  * http://polymer.github.io/PATENTS.txt
  */
 
-const assert = require('assert');
-const Type = require('./type.js');
+import assert from '../platform/assert-web.js';
 
 // ShapeView {name, direction, type}
 // Slot {name, direction}
+
+function _fromLiteral(member) {
+  if (typeof member == 'object')
+    return Type.fromLiteral(member);
+  return member;
+}
+
+function _toLiteral(member) {
+  if (member && member.toLiteral)
+    return member.toLiteral();
+  return member;
+}
 
 class Shape {
   constructor(views, slots) {
@@ -30,11 +41,47 @@ class Shape {
           this._typeVars.push({object: slot, field});
   }
 
+  toPrettyString() {
+    return "SHAAAAPE";
+  }
+
+  static fromLiteral(data) {
+    let views = data.views.map(view => ({type: _fromLiteral(view.type), name: _fromLiteral(view.name), direction: _fromLiteral(view.direction)}));
+    let slots = data.slots.map(slot => ({name: _fromLiteral(slot.name), direction: _fromLiteral(slot.direction)}));
+    return new Shape(views, slots);
+  }
+
+  toLiteral() {
+    let views = this.views.map(view => ({type: _toLiteral(view.type), name: _toLiteral(view.name), direction: _toLiteral(view.direction)}));
+    let slots = this.slots.map(slot => ({name: _toLiteral(slot.name), direction: _toLiteral(slot.direction)}));
+    return {views, slots};
+  }
 
   clone() {
     var views = this.views.map(({name, direction, type}) => ({name, direction, type}));
     var slots = this.slots.map(({name, direction}) => ({name, direction}));
     return new Shape(views, slots);
+  }
+
+  equals(other) {
+    if (this.views.length !== other.views.length)
+      return false;
+
+    // TODO: this isn't quite right as it doesn't deal with duplicates properly
+    for (let otherView of other.views) {
+      let exists = false;
+      for (let view of this.views) {
+        if (view.name == otherView.name && view.direction == otherView.direction && view.type.equals(otherView.type)) {
+          exists = true;
+          break;
+        }
+      }
+      if (!exists)
+        return false;
+    }
+
+    // TODO: compare slots too
+    return true;
   }
 
   static isTypeVar(reference) {
@@ -82,4 +129,6 @@ class Shape {
   }
 }
 
-module.exports = Shape;
+export default Shape;
+
+import Type from './type.js';

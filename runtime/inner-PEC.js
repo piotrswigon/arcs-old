@@ -9,15 +9,15 @@
  */
 "use strict";
 
-const Type = require('./type.js');
-const viewlet = require('./viewlet.js');
-const define = require('./particle.js').define;
-const assert = require('assert');
-const PECInnerPort = require('./api-channel.js').PECInnerPort;
-const ParticleSpec = require('./particle-spec.js');
-const Schema = require('./schema.js');
+import Type from './type.js';
+import handle from './handle.js';
+// import {define} from './particle.js';
+import assert from '../platform/assert-web.js';
+import {PECInnerPort} from './api-channel.js';
+import ParticleSpec from './particle-spec.js';
+import Schema from './schema.js';
 
-class RemoteView {
+class StorageProxy {
   constructor(id, type, port, pec, name, version) {
     this._id = id;
     this._type = type;
@@ -36,8 +36,8 @@ class RemoteView {
     return this._type;
   }
 
-  generateID() {
-    return this._pec.generateID();
+  generateIDComponents() {
+    return this._pec.generateIDComponents();
   }
 
   on(type, callback, target) {
@@ -46,40 +46,39 @@ class RemoteView {
   }
 
   synchronize(type, modelCallback, callback, target) {
-    this._port.Synchronize({view: this, modelCallback, callback, target, type});
+    this._port.Synchronize({handle: this, modelCallback, callback, target, type});
   }
 
   get() {
     return new Promise((resolve, reject) =>
-      this._port.ViewGet({ callback: r => {resolve(r)}, view: this }));
+      this._port.HandleGet({ callback: r => {resolve(r)}, handle: this }));
   }
 
   toList() {
     return new Promise((resolve, reject) =>
-      this._port.ViewToList({ callback: r => resolve(r), view: this }));
+      this._port.HandleToList({ callback: r => resolve(r), handle: this }));
   }
 
   set(entity) {
-    this._port.ViewSet({data: entity, view: this});
+    this._port.HandleSet({data: entity, handle: this});
   }
 
   store(entity) {
-    this._port.ViewStore({data: entity, view: this});
+    this._port.HandleStore({data: entity, handle: this});
   }
 
   remove(entityId) {
-    this._port.ViewRemove({data: entityId, view: this});
+    this._port.HandleRemove({data: entityId, handle: this});
   }
 
   clear() {
-    this._port.ViewClear({view: this});
+    this._port.HandleClear({handle: this});
   }
 }
 
 class InnerPEC {
   constructor(port, idBase, loader) {
     this._apiPort = new PECInnerPort(port);
-    this._views = new Map();
     this._particles = [];
     this._idBase = idBase;
     this._nextLocalID = 0;
@@ -96,14 +95,23 @@ class InnerPEC {
      * specifications separated from particle classes - and
      * only keeping type information on the arc side.
      */
-    this._apiPort.onDefineView = ({viewType, identifier, name, version}) => {
-      return new RemoteView(identifier, Type.fromLiteral(viewType), this._apiPort, this, name, version);
+    this._apiPort.onDefineHandle = ({type, identifier, name, version}) => {
+      return new StorageProxy(identifier, type, this._apiPort, this, name, version);
     };
 
-    this._apiPort.onCreateViewCallback = ({viewType, identifier, id, name, callback}) => {
-      var view = new RemoteView(id, Type.fromLiteral(viewType), this._apiPort, this, name, 0);
-      Promise.resolve().then(() => callback(view));
-      return view;
+    this._apiPort.onCreateHandleCallback = ({type, id, name, callback}) => {
+      var proxy = new StorageProxy(id, type, this._apiPort, this, name, 0);
+      Promise.resolve().then(() => callback(proxy));
+      return proxy;
+    }
+
+    this._apiPort.onCreateSlotCallback = ({hostedSlotId, callback}) => {
+      Promise.resolve().then(() => callback(hostedSlotId));
+      return hostedSlotId;
+    }
+
+    this._apiPort.onInnerArcRender = ({transformationParticle, transformationSlotName, hostedSlotId, content}) => {
+      transformationParticle.renderHostedSlot(transformationSlotName, hostedSlotId, content);
     }
 
     this._apiPort.onDefineParticle = ({particleDefinition, particleFunction}) => {
@@ -118,7 +126,7 @@ class InnerPEC {
     }
 
     this._apiPort.onInstantiateParticle =
-      ({spec, views}) => this._instantiateParticle(spec, views);
+      ({spec, handles}) => this._instantiateParticle(spec, handles);
 
     this._apiPort.onSimpleCallback = ({callback, data}) => callback(data);
 
@@ -185,6 +193,10 @@ class InnerPEC {
     }
   }
 
+  generateIDComponents() {
+    return {base: this._idBase, component: () => this._nextLocalID++};
+  }
+
   generateID() {
     return `${this._idBase}:${this._nextLocalID++}`;
   }
@@ -192,12 +204,18 @@ class InnerPEC {
   innerArcHandle(arcId) {
     var pec = this;
     return {
-      createView: function(viewType, name) {
+      createHandle: function(type, name) {
         return new Promise((resolve, reject) =>
-          pec._apiPort.ArcCreateView({arc: arcId, viewType, name, callback: view => {
-            var v = viewlet.viewletFor(view, view.type.isView, true, true);
-            v.entityClass = new Schema(view.type.isView ? view.type.primitiveType().entitySchema : view.type.entitySchema).entityClass();
+          pec._apiPort.ArcCreateHandle({arc: arcId, type, name, callback: proxy => {
+            var v = handle.handleFor(proxy, proxy.type.isSetView, true, true);
+            v.entityClass = (proxy.type.isSetView ? proxy.type.primitiveType().entitySchema : proxy.type.entitySchema).entityClass();
             resolve(v);
+          }}));
+      },
+      createSlot: function(transformationParticle, transformationSlotName, hostedParticleName, hostedSlotName) {
+        return new Promise((resolve, reject) =>
+          pec._apiPort.ArcCreateSlot({arc: arcId, transformationParticle, transformationSlotName, hostedParticleName, hostedSlotName, callback: hostedSlotId => {
+            resolve(hostedSlotId);
           }}));
       },
       loadRecipe: function(recipe) {
@@ -222,37 +240,40 @@ class InnerPEC {
     }
   }
 
-  async _instantiateParticle(spec, views) {
+  async _instantiateParticle(spec, proxies) {
     let name = spec.name;
     var resolve = null;
     var p = new Promise((res, rej) => resolve = res);
     this._pendingLoads.push(p);
     let clazz = await this._loader.loadParticleClass(spec);
     let capabilities = this.defaultCapabilitySet();
-    let particle = new clazz(capabilities);
+    let particle = new clazz();  // TODO: how can i add an argument to DomParticle ctor?
+    particle.capabilities = capabilities;
     this._particles.push(particle);
 
-    var viewMap = new Map();
-    views.forEach((value, key) => {
-      viewMap.set(key, viewlet.viewletFor(value, value.type.isView, spec.connectionMap.get(key).isInput, spec.connectionMap.get(key).isOutput));
+    var handleMap = new Map();
+    proxies.forEach((value, key) => {
+      handleMap.set(key, handle.handleFor(value, value.type.isSetView, spec.connectionMap.get(key).isInput, spec.connectionMap.get(key).isOutput));
     });
 
-    for (var view of viewMap.values()) {
-      var type = view.underlyingView().type;
+    for (let localHandle of handleMap.values()) {
+      var type = localHandle.underlyingView().type;
       let schemaModel;
-      if (type.isView) {
+      if (type.isSetView && type.primitiveType().isEntity) {
         schemaModel = type.primitiveType().entitySchema;
-      } else {
+      } else if (type.isEntity) {
         schemaModel = type.entitySchema;
       }
-      view.entityClass = new Schema(schemaModel).entityClass();
+
+      if (schemaModel)
+        localHandle.entityClass = schemaModel.entityClass();
     }
 
-    return [particle, () => {
+    return [particle, async () => {
       resolve();
       var idx = this._pendingLoads.indexOf(p);
       this._pendingLoads.splice(idx, 1);
-      particle.setViews(viewMap);
+      await particle.setViews(handleMap);
     }];
   }
 
@@ -286,4 +307,4 @@ class InnerPEC {
   }
 }
 
-module.exports = InnerPEC;
+export default InnerPEC;

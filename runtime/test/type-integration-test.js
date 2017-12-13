@@ -10,17 +10,16 @@
 
 "use strict";
 
-const assert = require('chai').assert;
-const Arc = require("../arc.js");
-const Loader = require("../loader.js");
-const Manifest = require('../manifest.js');
-const Viewlet = require('../viewlet.js');
-const Schema = require('../schema.js');
+import {assert} from './chai-web.js';
+import Arc from "../arc.js";
+import Loader from "../loader.js";
+import Manifest from '../manifest.js';
+import Schema from '../schema.js';
 
 async function setup() {
   let registry = {};
   let loader = new Loader();
-  let manifest = await Manifest.load('../particles/test/type-match.manifest', loader, registry);
+  let manifest = await Manifest.load('./particles/test/type-match.manifest', loader, registry);
   assert(manifest);
 
   return manifest
@@ -41,7 +40,7 @@ describe('type integration', () => {
     let manifest = await setup();
 
     let recipe = manifest.recipes[1];
-    recipe.views[0].mapToView({id: 'test1', type: manifest.findSchemaByName('Product').entityClass().type.viewOf()});
+    recipe.views[0].mapToView({id: 'test1', type: manifest.findSchemaByName('Product').entityClass().type.setViewOf()});
     assert(recipe.normalize());
     assert(recipe.isResolved());
     assert(recipe.views.length == 1);
@@ -52,7 +51,7 @@ describe('type integration', () => {
     let manifest = await setup();
 
     let recipe = manifest.recipes[1];
-    recipe.views[0].mapToView({id: 'test1', type: manifest.findSchemaByName('Lego').entityClass().type.viewOf()});
+    recipe.views[0].mapToView({id: 'test1', type: manifest.findSchemaByName('Lego').entityClass().type.setViewOf()});
     assert(recipe.normalize());
     assert(recipe.isResolved());
     assert(recipe.views.length == 1);

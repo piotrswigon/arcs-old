@@ -6,11 +6,11 @@
 // subject to an additional IP rights grant found at
 // http://polymer.github.io/PATENTS.txt
 
-let {Strategy} = require('../../strategizer/strategizer.js');
-let Recipe = require('../recipe/recipe.js');
-let RecipeWalker = require('../recipe/walker.js');
+import {Strategy} from '../../strategizer/strategizer.js';
+import Recipe from '../recipe/recipe.js';
+import RecipeWalker from '../recipe/walker.js';
 
-class AddUseViews extends Strategy {
+export default class AddUseViews extends Strategy {
   // TODO: move generation to use an async generator.
   async generate(strategizer) {
     var results = Recipe.over(this.getResults(strategizer), new class extends RecipeWalker {
@@ -23,7 +23,7 @@ class AddUseViews extends Strategy {
         if (freeViews.length > 0)
           return;
 
-        var disconnectedConnections = recipe.viewConnections.filter(vc => vc.view == null);
+        var disconnectedConnections = recipe.viewConnections.filter(vc => vc.view == null && !vc.isOptional);
 
         return recipe => {
           disconnectedConnections.forEach(vc => {
@@ -40,5 +40,3 @@ class AddUseViews extends Strategy {
     return { results, generate: null };
   }
 }
-
-module.exports = AddUseViews;

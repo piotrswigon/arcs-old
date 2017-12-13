@@ -7,14 +7,52 @@
 // http://polymer.github.io/PATENTS.txt
 'use strict';
 
-const assert = require('assert');
-const tracing = require("tracelib");
-const scheduler = require('./scheduler.js');
-const util = require('./recipe/util.js');
+import assert from '../platform/assert-web.js';
+import tracing from "../tracelib/trace.js";
+import scheduler from './scheduler.js';
+import util from './recipe/util.js';
 
-class ViewBase {
+class InMemoryKey {
+  constructor(key) {
+    var parts = key.split("://");
+    this.protocol = parts[0];
+    assert(this.protocol == 'in-memory');
+    this.location = parts[1];
+  }
+  toString() {
+    return this.protocol + '://' + this.location;
+  }
+}
+
+export class InMemoryStorage {
+  constructor(arc) {
+      this._arc = arc;
+      this._memoryMap = {};
+      this.localIDBase = 0;
+  }
+
+  construct(id, type, keyFragment) {
+    var key = new InMemoryKey(keyFragment);
+    if (key.location == undefined)
+      key.location = 'in-memory-' + this.localIDBase++;
+    var provider = InMemoryStorageProvider.newProvider(type, this._arc, undefined, id);
+    if (this._memoryMap[key.toString()] !== undefined)
+      return null;
+    this._memoryMap[key.toString()] = provider;
+    return provider;
+  }
+
+  connect(id, type, key) {
+    if (this._memoryMap[key] == undefined)
+      return null;
+    // TODO assert types match?
+    return this._memoryMap[key];
+  }
+}
+
+class InMemoryStorageProvider {
   constructor(type, arc, name, id) {
-    var trace = tracing.start({cat: 'view', name: 'ViewBase::constructor', args: {type: type.key, name: name}});
+    var trace = tracing.start({cat: 'view', name: 'InMemoryStorageProvider::constructor', args: {type: type.key, name: name}});
     this._type = type;
     this._arc = arc;
     this._listeners = new Map();
@@ -27,6 +65,10 @@ class ViewBase {
 
   generateID() {
     return this._arc.generateID();
+  }
+
+  generateIDComponents() {
+    return this._arc.generateIDComponents();
   }
 
   get type() {
@@ -45,7 +87,7 @@ class ViewBase {
     if (!listenerMap || listenerMap.size == 0)
       return;
 
-    var callTrace = tracing.start({cat: 'view', name: 'ViewBase::_fire', args: {kind, type: this._type.key,
+    var callTrace = tracing.start({cat: 'view', name: 'InMemoryStorageProvider::_fire', args: {kind, type: this._type.key,
         name: this.name, listeners: listenerMap.size}});
 
     // TODO: wire up a target (particle)
@@ -92,16 +134,22 @@ class ViewBase {
       results.push(`  description \`${this.description}\``)
     return results.join('\n');
   }
+
+  static newProvider(type, arc, name, id) {
+    if (type.isSetView)
+      return new InMemoryCollection(type, arc, name, id);
+    return new InMemoryVariable(type, arc, name, id);
+  }
 }
 
-class View extends ViewBase {
+class InMemoryCollection extends InMemoryStorageProvider {
   constructor(type, arc, name, id) {
     super(type, arc, name, id);
     this._items = new Map();
   }
 
   clone() {
-    var view = new View(this._type, this._arc, this.name, this.id);
+    var view = new InMemoryCollection(this._type, this._arc, this.name, this.id);
     view.cloneFrom(this);
     return view;
   }
@@ -114,19 +162,19 @@ class View extends ViewBase {
     this.description = view.description;
   }
 
-  get(id) {
+  async get(id) {
     return this._items.get(id);
   }
   traceInfo() {
     return {items: this._items.size};
   }
   // HACK: replace this with some kind of iterator thing?
-  toList() {
+  async toList() {
     return [...this._items.values()];
   }
 
-  store(entity) {
-    var trace = tracing.start({cat: "view", name: "View::store", args: {name: this.name}});
+  async store(entity) {
+    var trace = tracing.start({cat: "view", name: "InMemoryCollection::store", args: {name: this.name}});
     var entityWasPresent = this._items.has(entity.id);
 
     this._items.set(entity.id, entity);
@@ -136,8 +184,8 @@ class View extends ViewBase {
     trace.end({args: {entity}});
   }
 
-  remove(id) {
-    var trace = tracing.start({cat: "view", name: "View::remove", args: {name: this.name}});
+  async remove(id) {
+    var trace = tracing.start({cat: "view", name: "InMemoryCollection::remove", args: {name: this.name}});
     if (!this._items.has(id)) {
       return;
     }
@@ -178,14 +226,14 @@ class View extends ViewBase {
   }
 }
 
-class Variable extends ViewBase {
+class InMemoryVariable extends InMemoryStorageProvider {
   constructor(type, arc, name, id) {
     super(type, arc, name, id);
     this._stored = null;
   }
 
   clone() {
-    var variable = new Variable(this._type, this._arc, this.name, this.id);
+    var variable = new InMemoryVariable(this._type, this._arc, this.name, this.id);
     variable.cloneFrom(this);
     return variable;
   }
@@ -199,17 +247,17 @@ class Variable extends ViewBase {
     return {stored: this._stored !== null};
   }
 
-  get() {
+  async get() {
     return this._stored;
   }
 
-  set(entity) {
+  async set(entity) {
     this._stored = entity;
     this._version++;
     this._fire('change', {data: this._stored, version: this._version});
   }
 
-  clear() {
+  async clear() {
     this.set(undefined);
   }
 
@@ -244,8 +292,3 @@ class Variable extends ViewBase {
     })
   }
 }
-
-Object.assign(module.exports, {
-  View,
-  Variable,
-});

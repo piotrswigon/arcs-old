@@ -1,4 +1,4 @@
-  /**
+/**
  * @license
  * Copyright (c) 2017 Google Inc. All rights reserved.
  * This code may only be used under the BSD style license found at
@@ -7,12 +7,10 @@
  * subject to an additional IP rights grant found at
  * http://polymer.github.io/PATENTS.txt
  */
-"use strict";
 
-const runtime = require("./runtime.js");
-const {ParticleDescription, ConnectionDescription} = require("./description.js");
-const Type = require("./type.js");
-const assert = require("assert");
+import Type from './type.js';
+import Shape from './shape.js';
+import assert from '../platform/assert-web.js';
 
 class ConnectionSpec {
   constructor(rawData, typeVarMap) {
@@ -20,10 +18,12 @@ class ConnectionSpec {
     this.direction = rawData.direction;
     this.name = rawData.name;
     this.type = rawData.type.assignVariableIds(typeVarMap);
+    this.isOptional = rawData.isOptional;
   }
 
   get isInput() {
-    return this.direction == "in" || this.direction == "inout";
+    // TODO: we probably don't really want host to be here.
+    return this.direction == "in" || this.direction == "inout" || this.direction == "host";
   }
 
   get isOutput() {
@@ -55,11 +55,6 @@ class ProvidedSlotSpec {
 
 class ParticleSpec {
   constructor(model, resolveSchema) {
-    // TODO: This should really happen after parsing, not here.
-    if (model.args)
-      model.args.forEach(arg => arg.type = arg.type.resolveSchemas(resolveSchema));
-    else
-      model.args = [];
     this._model = model;
     this.name = model.name;
     this.verbs = model.verbs;
@@ -71,12 +66,12 @@ class ParticleSpec {
     this.outputs = this.connections.filter(a => a.isOutput);
     this.transient = model.transient;
 
-    // initialize descriptions.
+    // initialize descriptions patterns.
     model.description = model.description || {};
     this.validateDescription(model.description);
-    this.description = new ParticleDescription(model.description["pattern"], this);
+    this.pattern = model.description["pattern"];
     this.connections.forEach(connectionSpec => {
-      connectionSpec.description = new ConnectionDescription(model.description[connectionSpec.name], this, connectionSpec);
+      connectionSpec.pattern = model.description[connectionSpec.name];
     });
 
     this.implFile = model.implFile;
@@ -126,19 +121,31 @@ class ParticleSpec {
 
   static fromLiteral(literal) {
     literal.args.forEach(a => a.type = Type.fromLiteral(a.type));
-    return new ParticleSpec(literal, () => assert(false));
+    return new ParticleSpec(literal);
   }
 
   validateDescription(description) {
     Object.keys(description || []).forEach(d => {
-      assert(d == "pattern" || this.connectionMap.has(d), `Unexpected description for ${d}`);
+      assert(['kind', 'location', 'pattern'].includes(d) || this.connectionMap.has(d), `Unexpected description for ${d}`);
     });
+  }
+
+  toInterface() {
+    return Type.newInterface(this._toShape());
+  }
+
+  _toShape() {
+    const views = this._model.args;
+    // TODO: wat do?
+    assert(!this.slots.length, 'please implement slots toShape');
+    const slots = [];
+    return new Shape(views, slots);
   }
 
   toString() {
     let results = [];
     results.push(`particle ${this.name} in '${this.implFile}'`);
-    let connRes = this.connections.map(cs => `${cs.direction} ${cs.type.toString()} ${cs.name}`);
+    let connRes = this.connections.map(cs => `${cs.direction} ${cs.type.toString()}${cs.isOptional ? '?' : ''} ${cs.name}`);
     results.push(`  ${this.primaryVerb}(${connRes.join(', ')})`);
     this.affordance.filter(a => a != 'mock').forEach(a => results.push(`  affordance ${a}`));
     // TODO: support form factors
@@ -151,16 +158,20 @@ class ParticleSpec {
       });
     });
     // Description
-    if (this.description.hasPattern()) {
-      results.push(`  description \`${this.description.pattern}\``);
+    if (!!this.pattern) {
+      results.push(`  description \`${this.pattern}\``);
       this.connections.forEach(cs => {
-        if (cs.description.hasPattern()) {
-          results.push(`    ${cs.name} \`${cs.description.pattern}\``);
+        if (!!cs.pattern) {
+          results.push(`    ${cs.name} \`${cs.pattern}\``);
         }
       });
     }
     return results.join('\n');
   }
+
+  toManifestString() {
+    return this.toString();
+  }
 }
 
-module.exports = ParticleSpec;
+export default ParticleSpec;

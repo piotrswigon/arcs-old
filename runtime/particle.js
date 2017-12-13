@@ -9,11 +9,11 @@
  */
 "use strict";
 
-var runtime = require("./runtime.js");
-var ParticleSpec = require("./particle-spec.js");
-var tracing = require('tracelib');
-var assert = require('assert');
-const Schema = require('./schema.js');
+import runtime from './runtime.js';
+import ParticleSpec from './particle-spec.js';
+import tracing from '../tracelib/trace.js';
+import assert from '../platform/assert-web.js';
+import Schema from './schema.js';
 
 const DEBUGGING = false;
 
@@ -21,7 +21,7 @@ const DEBUGGING = false;
  * A basic particle. For particles that provide UI, you may like to
  * instead use DOMParticle.
  */
-class Particle {
+export class Particle {
   constructor(capabilities) {
     this.spec = this.constructor.spec;
     if (this.spec.inputs.length == 0)
@@ -35,6 +35,7 @@ class Particle {
     this.states = new Map();
     this._slotByName = new Map();
     this.capabilities = capabilities || {};
+    this.hostedSlotBySlotId = new Map();
   }
 
   /** @method setViews(views)
@@ -156,9 +157,40 @@ class Particle {
     assert(slot, `Particle::fireEvent: slot ${slotName} is falsey`);
     slot.fireEvent(event);
   }
+
+  static buildManifest(strings, ...bits) {
+    let output = [];
+    for (let i = 0; i < bits.length; i++) {
+        let str = strings[i];
+        let indent = / *$/.exec(str)[0];
+        if (typeof bits[i] == 'string')
+          var bitStr = bits[i];
+        else
+          var bitStr = bits[i].toManifestString();
+        bitStr = bitStr.replace(/(\n)/g, '$1' + indent);
+        output.push(str);
+        output.push(bitStr);
+    }
+    if (strings.length > bits.length)
+      output.push(strings[strings.length - 1]);
+    return output.join('');
+  }
+
+  setParticleDescription(pattern) {
+    return this.setDescriptionPattern('_pattern_', pattern);
+
+  }
+  setDescriptionPattern(connectionName, pattern) {
+    let descriptions = this._views.get('descriptions');
+    if (descriptions) {
+      descriptions.store(new descriptions.entityClass({key: connectionName, value: pattern}, connectionName));
+      return true;
+    }
+    return false;
+  }
 }
 
-class ViewChanges {
+export class ViewChanges {
   constructor(views, names, type) {
     if (typeof names == "string")
       names = [names];
@@ -177,7 +209,7 @@ class ViewChanges {
   }
 }
 
-class SlotChanges {
+export class SlotChanges {
   constructor() {
   }
   register(particle, f) {
@@ -185,7 +217,7 @@ class SlotChanges {
   }
 }
 
-class StateChanges {
+export class StateChanges {
   constructor(states) {
     if (typeof states == "string")
       states = [states];
@@ -196,7 +228,4 @@ class StateChanges {
   }
 }
 
-exports.Particle = Particle;
-exports.ViewChanges = ViewChanges;
-exports.SlotChanges = SlotChanges;
-exports.StateChanges = StateChanges;
+export default {Particle, ViewChanges, SlotChanges, StateChanges};

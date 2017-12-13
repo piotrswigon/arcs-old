@@ -9,13 +9,13 @@
  */
 "use strict";
 
-const Arc = require('../arc.js');
-const assert = require('chai').assert;
-const Slot = require("../slot.js");
-const SlotComposer = require("../slot-composer.js");
-const Manifest = require('../manifest.js');
-const Planner = require('../planner.js');
-const util = require('./test-util.js');
+import Arc from '../arc.js';
+import {assert} from './chai-web.js';
+import Slot from "../slot.js";
+import SlotComposer from "../slot-composer.js";
+import Manifest from '../manifest.js';
+import Planner from '../planner.js';
+import * as util from './test-util.js';
 
 class MockSlot extends Slot {
   constructor(consumeConn, arc) {
@@ -84,11 +84,10 @@ recipe
     assert.deepEqual(["root"], Object.keys(slotComposer.getAvailableSlots()));
 
     // initializing recipe
-    slotComposer.initializeRecipe(plan.particles);
+    await slotComposer.initializeRecipe(plan.particles);
     assert.deepEqual(['A'], startRenderParticles);
 
     // render root slot
-    debugger;
     let particle = plan.particles[0];
     slotComposer.renderSlot(particle, 'root', 'dummy-content');
     let rootSlot = slotComposer.getSlot(particle, 'root');
@@ -97,7 +96,7 @@ recipe
     // update inner slots
     startRenderParticles.length = 0;
     rootSlot.getInnerContext = (providedSlotName) => providedSlotName == 'mySlot' ? 'dummy-inner-context' : null;
-    slotComposer.updateInnerSlots(rootSlot);
+    await slotComposer.updateInnerSlots(rootSlot);
     assert.deepEqual(['B', 'BB'], startRenderParticles);
 
     // get available slots

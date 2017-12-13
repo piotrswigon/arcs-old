@@ -9,9 +9,9 @@
  */
 "use strict";
 
-let assert = require('chai').assert;
-const Slot = require('../slot.js');
-const SlotComposer = require('../slot-composer.js');
+import {assert} from './chai-web.js';
+import Slot from '../slot.js';
+import SlotComposer from '../slot-composer.js';
 
 let logging = false;
 let log = (!logging || global.logging === false) ? () => {} : console.log.bind(console, '---------- MockSlotComposer::');
@@ -89,10 +89,10 @@ class MockSlotComposer extends SlotComposer {
     this.pec.sendEvent(particle, slotName, {handler: event, data});
   }
 
-  renderSlot(particle, slotName, content) {
-    console.log(`renderSlot ${particle.name}:${slotName}`, Object.keys(content).join(', '));
+  async renderSlot(particle, slotName, content) {
+//    console.log(`renderSlot ${particle.name}:${slotName}`, Object.keys(content).join(', '));
     assert(this.expectQueue.length > 0 && this.expectQueue[0],
-      `Got a renderSlot from ${particle.name}:${slotName}, but not expecting anything further.`);
+      `Got a renderSlot from ${particle.name}:${slotName} (content types: ${Object.keys(content).join(', ')}), but not expecting anything further.`);
     var expectations = this.expectQueue[0];
     for (let contentType of Object.keys(content)) {
       let found = false;
@@ -105,7 +105,7 @@ class MockSlotComposer extends SlotComposer {
           break;
         }
       }
-      assert(found, `Unexpected render slot ${slotName} for particle ${particle.name} (content type ${contentType})`);
+      assert(found, `Unexpected render slot ${slotName} for particle ${particle.name} (content type: ${contentType})`);
     }
     if (expectations.length == 0) {
       this.expectQueue.shift();
@@ -113,7 +113,12 @@ class MockSlotComposer extends SlotComposer {
     }
 
     super.renderSlot(particle, slotName, content);
-    super.updateInnerSlots(this.getSlot(particle, slotName));
+    let slot = this.getSlot(particle, slotName);
+    if (slot) {
+      await super.updateInnerSlots(slot);
+    } else {
+      // Slots of particles hosted in transformation particles.
+    }
   }
 
   expectationMet(expectation) {
@@ -127,4 +132,4 @@ class MockSlotComposer extends SlotComposer {
   }
 }
 
-module.exports = MockSlotComposer;
+export default MockSlotComposer;

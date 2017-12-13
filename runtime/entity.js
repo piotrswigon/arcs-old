@@ -7,16 +7,22 @@
 // http://polymer.github.io/PATENTS.txt
 'use strict';
 
-const assert = require('assert');
-const Symbols = require('./symbols.js');
-const Type = require('./type.js');
+import assert from '../platform/assert-web.js';
+import Symbols from './symbols.js';
+import Type from './type.js';
 
 class Entity {
-  constructor() {
+  constructor(userIDComponent) {
+    assert(!userIDComponent || userIDComponent.indexOf(':') == -1, "user IDs must not contain the ':' character")
     this[Symbols.identifier] = undefined;
+    this._userIDComponent = userIDComponent;
   }
   get data() {
     return undefined;
+  }
+
+  getUserID() {
+    return this._userIDComponent;
   }
 
   isIdentified() {
@@ -25,6 +31,17 @@ class Entity {
   identify(identifier) {
     assert(!this.isIdentified());
     this[Symbols.identifier] = identifier;
+    let components = identifier.split(':');
+    if (components[components.length - 2] == 'uid')
+      this._userIDComponent = components[components.length - 1];
+  }
+  createIdentity(components) {
+    assert(!this.isIdentified());
+    if (this._userIDComponent)
+      var id = `${components.base}:uid:${this._userIDComponent}`;
+    else
+      var id = `${components.base}:${components.component()}`;
+    this[Symbols.identifier] = id;
   }
   toLiteral() {
     return this.rawData;
@@ -41,4 +58,4 @@ class Entity {
   }
 }
 
-module.exports = Entity;
+export default Entity;

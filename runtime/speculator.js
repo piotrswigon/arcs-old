@@ -9,17 +9,16 @@
  */
 "use strict";
 
-let assert = require('assert');
-var tracing = require('tracelib');
-const scheduler = require('./scheduler.js');
-const Relevance = require('./relevance.js');
+import assert from '../platform/assert-web.js';
+import tracing from '../tracelib/trace.js';
+import scheduler from './scheduler.js';
+import Relevance from './relevance.js';
 
 class Speculator {
 
   speculate(arc, plan) {
     var trace = tracing.start({cat: "speculator", name: "Speculator::speculate"});
     var newArc = arc.cloneForSpeculativeExecution();
-    newArc.instantiate(plan);
     let relevance = new Relevance();
     async function awaitCompletion() {
       await scheduler.idle;
@@ -34,10 +33,10 @@ class Speculator {
       }
     }
 
-    let result = awaitCompletion();
+    let result = newArc.instantiate(plan).then(a => awaitCompletion());
     trace.end();
     return result;
   }
 }
 
-module.exports = Speculator;
+export default Speculator;

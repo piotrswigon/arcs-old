@@ -9,7 +9,7 @@
  */
 "use strict";
 
-const assert = require('assert');
+import assert from '../platform/assert-web.js';
 
 class Slot {
   constructor(consumeConn, arc) {
@@ -20,25 +20,25 @@ class Slot {
     this._context = null;
     this.startRenderCallback = null;
     this.stopRenderCallback = null;
-
+    this._hostedSlotById = new Map();
   }
   get consumeConn() { return this._consumeConn; }
   get arc() { return this._arc; }
-  get context() { return this._context; }
-  set context(context) { this._context = context; }
+  getContext() { return this._context; }
+  async setContext(context) { this._context = context; }
   isSameContext(context) { return this._context == context; }
 
-  setContext(context) {
+  async updateContext(context) {
     // do nothing, if context unchanged.
-    if ((!this.context && !context) ||
-        (this.context && context && this.isSameContext(context))) {
+    if ((!this.getContext() && !context) ||
+        (this.getContext() && context && this.isSameContext(context))) {
       return;
     }
 
     // update the context;
-    let wasNull = !this.context;
-    this.context = context;
-    if (this.context) {
+    let wasNull = !this.getContext();
+    await this.setContext(context);
+    if (this.getContext()) {
       if (wasNull) {
         this.startRender();
       }
@@ -48,39 +48,67 @@ class Slot {
   }
   startRender() {
     if (this.startRenderCallback) {
-      this.startRenderCallback({
-        particle: this.consumeConn.particle,
-        slotName: this.consumeConn.name,
-        contentTypes: this.constructRenderRequest()
-      });
+      let contentTypes = this.constructRenderRequest();
+      this.startRenderCallback({ particle: this.consumeConn.particle, slotName: this.consumeConn.name, contentTypes });
+
+      for (let hostedSlot of this._hostedSlotById.values()) {
+        this.startRenderCallback({ particle: hostedSlot.particle, slotName: hostedSlot.slotName, contentTypes });
+      }
     }
   }
+
   stopRender() {
     if (this.stopRenderCallback) {
-      this.stopRenderCallback &&
-      this.stopRenderCallback({
-        particle: this.consumeConn.particle,
-        slotName: this.consumeConn.name
-      });
+      this.stopRenderCallback({ particle: this.consumeConn.particle, slotName: this.consumeConn.name });
+
+      for (let hostedSlot of this._hostedSlotById.values()) {
+        this.stopRenderCallback({ particle: hostedSlot.particle, slotName: hostedSlot.slotName });
+      }
     }
   }
-  populateViewDescriptions() {
+
+  async populateViewDescriptions() {
     let descriptions = {};
-    Object.values(this.consumeConn.particle.connections).forEach(viewConn => {
-      if (viewConn.view  && viewConn.view.id) {
-        let view = this._arc.findViewById(viewConn.view.id);
-        assert(view, `Cannot find view ${viewConn.view.id} for connection ${viewConn.name} in the arc`);
-        if (view.description)
-          descriptions[`${viewConn.name}.description`] = view.description;
+    await Promise.all(Object.values(this.consumeConn.particle.connections).map(async viewConn => {
+      if (viewConn.view) {
+        descriptions[`${viewConn.name}.description`] = (await this._arc.description.getViewDescription(viewConn.view)).toString();
       }
-    });
+    }));
     return descriptions;
   }
+
+  addHostedSlot(hostedSlotId, hostedParticleName, hostedSlotName) {
+    assert(hostedSlotId, `Hosted slot ID must be provided`);
+    assert(!this._hostedSlotById.has(hostedSlotId), `Hosted slot ${hostedSlotId} already exists`);
+    this._hostedSlotById.set(hostedSlotId, {slotId: hostedSlotId, particleName: hostedParticleName, slotName: hostedSlotName});
+    return hostedSlotId;
+  }
+  getHostedSlot(hostedSlotId) {
+    return this._hostedSlotById.get(hostedSlotId);
+  }
+  findHostedSlot(hostedParticle, hostedSlotName) {
+    for (let hostedSlot of this._hostedSlotById.values()) {
+      if (hostedSlot.particle == hostedParticle && hostedSlot.slotName == hostedSlotName) {
+        return hostedSlot;
+      }
+    }
+  }
+  initHostedSlot(hostedSlotId, hostedParticle) {
+    let hostedSlot = this.getHostedSlot(hostedSlotId);
+    assert(hostedSlot, `Hosted slot ${hostedSlotId} doesn't exist`);
+    assert(hostedSlot.particleName == hostedParticle.name,
+           `Unexpected particle name ${hostedParticle.name} for slot ${hostedSlotId}; expected: ${hostedSlot.particleName}`)
+    hostedSlot.particle = hostedParticle;
+    if (this.getContext() && this.startRenderCallback) {
+      this.startRenderCallback({ particle: hostedSlot.particle, slotName: hostedSlot.slotName, contentTypes: this.constructRenderRequest() });
+    }
+  }
+
   // absract
-  setContent(content, handler) {}
+  async setContent(content, handler) {}
   getInnerContext(slotName) {}
   constructRenderRequest() {}
   static findRootSlots(context) { }
 }
 
-module.exports = Slot;
+export default Slot;

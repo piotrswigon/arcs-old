@@ -8,13 +8,14 @@
  */
 'use strict';
 
-const Identifier = require('./identifier.js');
-const Entity = require('./entity.js');
-const Relation = require('./relation.js');
-const Symbols = require('./symbols.js');
-const underlyingView = require('./view.js');
+import Identifier from './identifier.js';
+import Entity from './entity.js';
+import Relation from './relation.js';
+import Symbols from './symbols.js';
+import * as storage from './in-memory-storage.js';
 let identifier = Symbols.identifier;
-const assert = require("assert");
+import assert from '../platform/assert-web.js';
+import ParticleSpec from './particle-spec.js';
 
 // TODO: This won't be needed once runtime is transferred between contexts.
 function cloneData(data) {
@@ -34,10 +35,10 @@ function restore(entry, entityClass) {
   return entity;
 }
 
-/** @class Viewlet
+/** @class Handle
  * Base class for Views and Variables.
  */
-class Viewlet {
+class Handle {
   constructor(view, canRead, canWrite) {
     this._view = view;
     this.canRead = canRead;
@@ -60,12 +61,18 @@ class Viewlet {
   }
 
   generateID() {
+    assert(this._view.generateID);
     return this._view.generateID();
+  }
+
+  generateIDComponents() {
+    assert(this._view.generateIDComponents);
+    return this._view.generateIDComponents();
   }
 
   _serialize(entity) {
     if (!entity.isIdentified())
-      entity.identify(this.generateID());
+      entity.createIdentity(this.generateIDComponents());
     let id = entity[identifier];
     let rawData = entity.dataClone();
     return {
@@ -75,7 +82,7 @@ class Viewlet {
   }
 
   _restore(entry) {
-    assert(this.entityClass, "Viewlets need entity classes for deserialization");
+    assert(this.entityClass, "Handles need entity classes for deserialization");
     return restore(entry, this.entityClass);
   }
 
@@ -89,6 +96,10 @@ class Viewlet {
   get _id() {
     return this._view._id;
   }
+
+  toManifestString() {
+    return `'${this._id}'`;
+  }
 }
 
 /** @class View
@@ -98,7 +109,7 @@ class Viewlet {
  * connected to that particle, and the current recipe identifies which views are
  * connected.
  */
-class View extends Viewlet {
+class Collection extends Handle {
   constructor(view, canRead, canWrite) {
     // TODO: this should talk to an API inside the PEC.
     super(view, canRead, canWrite);
@@ -123,7 +134,7 @@ class View extends Viewlet {
    * throws: Error if this view is not configured as a writeable view (i.e. 'out' or 'inout')
      in the particle's manifest.
    */
-  store(entity) {
+  async store(entity) {
     if (!this.canWrite)
       throw new Error("View not writeable");
     var serialization = this._serialize(entity);
@@ -135,7 +146,7 @@ class View extends Viewlet {
    * throws: Error if this view is not configured as a writeable view (i.e. 'out' or 'inout')
      in the particle's manifest.
    */
-  remove(entity) {
+  async remove(entity) {
     if (!this.canWrite)
       throw new Error("View not writeable");
     var serialization = this._serialize(entity);
@@ -153,7 +164,7 @@ class View extends Viewlet {
  * the types of views that need to be connected to that particle, and
  * the current recipe identifies which views are connected.
  */
-class Variable extends Viewlet {
+class Variable extends Handle {
   constructor(variable, canRead, canWrite) {
     super(variable, canRead, canWrite);
   }
@@ -168,8 +179,13 @@ class Variable extends Viewlet {
     if (!this.canRead)
       throw new Error("View not readable");
     var result = await this._view.get();
-    var data = result == null ? undefined : this._restore(result);
-    return data;
+    if (result == null)
+      return undefined;
+    if (this.type.isEntity)
+      return this._restore(result);
+    if (this.type.isInterface)
+      return ParticleSpec.fromLiteral(result);
+    return result;
   }
 
   /** @method set(entity)
@@ -177,7 +193,7 @@ class Variable extends Viewlet {
    * throws: Error if this variable is not configured as a writeable view (i.e. 'out' or 'inout')
      in the particle's manifest.
    */
-  set(entity) {
+  async set(entity) {
     if (!this.canWrite)
       throw new Error("View not writeable");
     return this._view.set(this._serialize(entity));
@@ -188,10 +204,10 @@ class Variable extends Viewlet {
    * throws: Error if this variable is not configured as a writeable view (i.e. 'out' or 'inout')
      in the particle's manifest.
    */
-  clear() {
+  async clear() {
     if (!this.canWrite)
       throw new Error("View not writeable");
-    this._view.clear();
+    await this._view.clear();
   }
   async debugString() {
     var value = await this.get();
@@ -199,16 +215,17 @@ class Variable extends Viewlet {
   }
 }
 
-function viewletFor(view, isView, canRead, canWrite) {
+function handleFor(view, isSet, canRead, canWrite) {
   if (canRead == undefined)
     canRead = true;
   if (canWrite == undefined)
     canWrite = true;
-  if (isView || (isView == undefined && view instanceof underlyingView.View))
-    view = new View(view, canRead, canWrite);
+  let handle;
+  if (isSet || (isSet == undefined && view.type.isSetView))
+    handle = new Collection(view, canRead, canWrite);
   else
-    view = new Variable(view, canRead, canWrite);
-  return view;
+    handle = new Variable(view, canRead, canWrite);
+  return handle;
 }
 
-module.exports = { viewletFor };
+export default {handleFor};

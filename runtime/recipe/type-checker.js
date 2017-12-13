@@ -5,8 +5,8 @@
 // subject to an additional IP rights grant found at
 // http://polymer.github.io/PATENTS.txt
 
-var Type = require('../type.js');
-var assert = require('assert');
+import Type from '../type.js';
+import assert from '../../platform/assert-web.js';
 
 class TypeChecker {
 
@@ -24,50 +24,53 @@ class TypeChecker {
         return {valid: false};
       }
     }
-    TypeChecker.applyVariableResolutions(variableResolutions);
-    return {type: baseType, valid: true};
-  }
 
-  static _applyResolutionsToType(type, resolutions) {
-    if (resolutions.length > 0)
-      console.log('apply resolutions to type', type, resolutions);
-    return type;
+    return {type: baseType, valid: true};
   }
 
   static _coerceTypes(left, right) {
     var leftType = left.type;
     var rightType = right.type;
-    var resolutions = [];
 
-    while (leftType.isView && rightType.isView) {
+    while (leftType.isSetView && rightType.isSetView) {
       leftType = leftType.primitiveType();
       rightType = rightType.primitiveType();
     }
+
+    leftType = leftType.resolvedType();
+    rightType = rightType.resolvedType();
+
+    if (leftType.equals(rightType))
+      return left;
+
     // TODO: direction?
     if (leftType.isVariable) {
-      resolutions.push({variable: leftType, becomes: rightType, context: left.connection});
+      leftType.variable.resolution = rightType;
       var type = right;
     } else if (rightType.isVariable) {
-      resolutions.push({variable: rightType, becomes: leftType, context: right.connection});
+      rightType.variable.resolution = leftType;
       var type = left;
     } else {
       return null;
     }
-    return {type, resolutions};
+    return type;
   }
 
   static isSubclass(subclass, superclass) {
     var subtype = subclass.type;
     var supertype = superclass.type;
-    while (subtype.isView && supertype.isView) {
+    while (subtype.isSetView && supertype.isSetView) {
       subtype = subtype.primitiveType();
       supertype = supertype.primitiveType();
     }
 
+    if (!(subtype.isEntity && supertype.isEntity))
+      return false;
+
     function checkSuper(schema) {
       if (!schema)
         return false;
-      if (schema == supertype.entitySchema)
+      if (schema.equals(supertype.entitySchema))
         return true;
       for (let parent of schema.parents)
         if (checkSuper(parent))
@@ -79,10 +82,7 @@ class TypeChecker {
   }
 
   // left, right: {type, direction, connection}
-  static compareTypes(left, right, resolutions) {
-    left = TypeChecker._applyResolutionsToType(left, resolutions);
-    right = TypeChecker._applyResolutionsToType(right, resolutions);
-
+  static compareTypes(left, right) {
     if (left.type.equals(right.type))
       return {type: left, valid: true};
 
@@ -119,28 +119,16 @@ class TypeChecker {
       return {valid: false};
     }
     // TODO: direction?
-    result.resolutions.forEach(resolution => resolutions.push(resolution));
     return {type: result.type, valid: true}
   }
 
   static substitute(type, variable, value) {
     if (type.equals(variable))
       return value;
-    if (type.isView)
-      return TypeChecker.substitute(type.primitiveType(), variable, value).viewOf();
+    if (type.isSetView)
+      return TypeChecker.substitute(type.primitiveType(), variable, value).setViewOf();
     return type;
-  }
-
-  static applyVariableResolutions(resolutions) {
-    resolutions.forEach(resolution => {
-      var particle = resolution.context.particle;
-      particle.allConnections().forEach(connection => {
-        // TODO: is this actually always true?
-        assert(connection.type == connection.rawType);
-        connection._type = TypeChecker.substitute(connection.rawType, resolution.variable, resolution.becomes);
-      });
-    });
   }
 }
 
-module.exports = TypeChecker;
+export default TypeChecker;

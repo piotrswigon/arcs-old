@@ -9,21 +9,24 @@
  */
  "use strict";
 
-let Arc = require('../arc.js');
-let Loader = require('../loader.js');
-let Planner = require('../planner.js');
-let assert = require('chai').assert;
-let Manifest = require('../manifest.js');
-let Recipe = require('../recipe/recipe.js');
-let ConvertConstraintsToConnections = require('../strategies/convert-constraints-to-connections.js');
-let InitPopulation = require('../strategies/init-population.js');
-let MapRemoteSlots = require('../strategies/map-remote-slots.js');
-let MatchParticleByVerb = require('../strategies/match-particle-by-verb.js');
-let SearchTokensToParticles = require('../strategies/search-tokens-to-particles.js');
-let GroupViewConnections = require('../strategies/group-view-connections.js');
-let CombinedStrategy = require('../strategies/combined-strategy.js');
-let FallbackFate = require('../strategies/fallback-fate.js');
-
+import Arc from '../arc.js';
+import Loader from '../loader.js';
+import Planner from '../planner.js';
+import {assert} from './chai-web.js';
+import Manifest from '../manifest.js';
+import Recipe from '../recipe/recipe.js';
+import ConvertConstraintsToConnections from '../strategies/convert-constraints-to-connections.js';
+import InitPopulation from '../strategies/init-population.js';
+import MapRemoteSlots from '../strategies/map-remote-slots.js';
+import MatchParticleByVerb from '../strategies/match-particle-by-verb.js';
+import SearchTokensToParticles from '../strategies/search-tokens-to-particles.js';
+import GroupViewConnections from '../strategies/group-view-connections.js';
+import CombinedStrategy from '../strategies/combined-strategy.js';
+import CreateDescriptionHandle from '../strategies/create-description-handle.js';
+import FallbackFate from '../strategies/fallback-fate.js';
+import MessageChannel from '../message-channel.js';
+import InnerPec from '../inner-PEC.js';
+import Particle from '../particle.js';
 var loader = new Loader();
 
 function createTestArc(id, context, affordance) {
@@ -39,25 +42,25 @@ function createTestArc(id, context, affordance) {
 
 describe('Planner', function() {
   it('can generate things', async () => {
-    let manifest = await Manifest.load('../particles/test/giftlist.manifest', loader);
+    let manifest = await Manifest.load('./particles/test/giftlist.manifest', loader);
     var arc = createTestArc("test-plan-arc", manifest, "dom");
     let Person = manifest.findSchemaByName('Person').entityClass();
     let Product = manifest.findSchemaByName('Person').entityClass();
     var planner = new Planner();
     planner.init(arc);
-    await planner.generate(),
-    await planner.generate(),
-    await planner.generate(),
+    await planner.generate();
+    await planner.generate();
+    await planner.generate();
     assert.equal(planner.strategizer.population.length, 5);
   });
 
   it('make a plan with views', async () => {
-    let manifest = await Manifest.load('../particles/test/giftlist.manifest', loader);
+    let manifest = await Manifest.load('./particles/test/giftlist.manifest', loader);
     var arc = createTestArc("test-plan-arc", manifest, "dom");
     let Person = manifest.findSchemaByName('Person').entityClass();
     let Product = manifest.findSchemaByName('Product').entityClass();
-    var personView = arc.createView(Person.type.viewOf(), "aperson");
-    var productView = arc.createView(Product.type.viewOf(), "products");
+    var personView = arc.createView(Person.type.setViewOf(), "aperson");
+    var productView = arc.createView(Product.type.setViewOf(), "products");
     var planner = new Planner();
     planner.init(arc);
     await planner.generate(),
@@ -67,7 +70,7 @@ describe('Planner', function() {
   });
 });
 
-const InitSearch = require('../strategies/init-search.js');
+import InitSearch from '../strategies/init-search.js';
 describe('InitSearch', async () => {
   it('initializes the search recipe', async() => {
     var arc = new Arc({id: 'test-plan-arc', context: {}});
@@ -80,7 +83,7 @@ describe('InitSearch', async () => {
   });
 });
 
-describe('InitPopulation', async () => {
+describe('InitPopulation', async ()  => {
   it('penalizes resolution of particles that already exist in the arc', async() => {
     let manifest = await Manifest.parse(`
       schema Product
@@ -95,7 +98,7 @@ describe('InitPopulation', async () => {
     let recipe = manifest.recipes[0];
     assert(recipe.normalize());
     var arc = new Arc({id: 'test-plan-arc', context: {recipes: [recipe]}});
-    arc.instantiate(recipe);
+    await arc.instantiate(recipe);
     let ip = new InitPopulation(arc);
 
     var strategizer = {generated: [], generation: 0};
@@ -381,9 +384,9 @@ describe('AssignOrCopyRemoteViews', function() {
       `));
 
       let schema = manifest.findSchemaByName('Foo');
-      manifest.newView(schema.type.viewOf(), 'Test1', 'test-1', ['#tag1']);
-      manifest.newView(schema.type.viewOf(), 'Test2', 'test-2', ['#tag2']);
-      manifest.newView(schema.type.viewOf(), 'Test2', 'test-3', []);
+      manifest.newView(schema.type.setViewOf(), 'Test1', 'test-1', ['#tag1']);
+      manifest.newView(schema.type.setViewOf(), 'Test2', 'test-2', ['#tag2']);
+      manifest.newView(schema.type.setViewOf(), 'Test2', 'test-3', []);
 
       var arc = createTestArc("test-plan-arc", manifest, "dom");
 
@@ -718,5 +721,96 @@ describe('FallbackFate', function() {
     var strategy = new FallbackFate(arc);
     let { results } = await strategy.generate(strategizer);
     assert.equal(results.length, 0);
+  });
+});
+
+
+describe('CreateDescriptionHandle', function() {
+  it('descriptions handle created', async () => {
+    let manifest = (await Manifest.parse(`
+      schema Description
+      particle DoSomething in 'AA.js'
+        DoSomething(out [Description] descriptions)
+
+      recipe
+        DoSomething as particle0
+    `));
+    let recipe = manifest.recipes[0];
+    var strategizer = {generated: [{result: manifest.recipes[0], score: 1}], terminal: []};
+    var strategy = new CreateDescriptionHandle();
+    let results = (await strategy.generate(strategizer)).results;
+
+    assert.equal(results.length, 1);
+    let plan = results[0].result;
+    assert.equal(plan.views.length, 1);
+    assert.equal('create', plan.views[0].fate);
+    assert.isTrue(plan.isResolved());
+  });
+});
+
+describe('Description', async ()  => {
+  it('description generated from speculative execution arc', async() => {
+    let registry = {};
+    let loader = new class extends Loader {
+      loadResource(path) {
+        return {
+          manifest: `
+          schema Thing
+            optional
+              Text name
+
+          particle A in 'A.js'
+            A(out Thing thing)
+            consume root
+            description \`Make \${thing}\`
+
+          recipe
+            create as v1
+            slot 'root-slot' as slot0
+            A
+              thing -> v1
+              consume root as slot0
+
+          `
+        }[path];
+      }
+      async requireParticle(fileName) {
+        let clazz = class {
+          constructor() {
+            this.relevances = [1];
+          }
+          async setViews(views) {
+            let thingView = views.get('thing');
+            thingView.set(new thingView.entityClass({name: 'MYTHING'}));
+          }
+        };
+        return clazz;
+      }
+      path(fileName) {
+        return fileName;
+      }
+      join(_, file) {
+        return file;
+      }
+    };
+    let manifest = await Manifest.load('manifest', loader, {registry});
+
+    let recipe = manifest.recipes[0];
+    assert(recipe.normalize());
+    assert.isTrue(recipe.isResolved());
+
+    var pecFactory = function(id) {
+      var channel = new MessageChannel();
+      new InnerPec(channel.port1, `${id}:inner`, loader);
+      return channel.port2;
+    };
+    var arc = new Arc({id: 'test-plan-arc', context: manifest, pecFactory, loader});
+    let planner = new Planner();
+    planner.init(arc);
+
+    let plans = await planner.suggest();
+    assert.equal(plans.length, 1);
+    assert.equal('Make <b>MYTHING</b>.', plans[0].description);
+    assert.equal(0, arc._viewsById.size);
   });
 });

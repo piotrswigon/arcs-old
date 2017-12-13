@@ -8,9 +8,7 @@
  * http://polymer.github.io/PATENTS.txt
  */
 
-const Entity = require("./entity.js");
-const assert = require('assert');
-const Type = require('./type.js');
+import assert from '../platform/assert-web.js';
 
 class Schema {
   constructor(model) {
@@ -19,7 +17,8 @@ class Schema {
     this.parents = (model.parents || []).map(parent => new Schema(parent));
     this._normative = {};
     this._optional = {};
-    assert(model.sections);
+
+    assert(model.sections, `${JSON.stringify(model)} should have sections`);
     for (var section of model.sections) {
       var into = section.sectionType == 'normative' ? this._normative : this._optional;
       for (var field in section.fields) {
@@ -33,8 +32,16 @@ class Schema {
     return this._model;
   }
 
+  static fromLiteral(data) {
+    return new Schema(data);
+  }
+
+  equals(otherSchema) {
+    return this.toLiteral() == otherSchema.toLiteral();
+  }
+
   get type() {
-    return Type.newEntity(this.toLiteral());
+    return Type.newEntity(this);
   }
 
   get normative() {
@@ -57,10 +64,10 @@ class Schema {
     let schema = this;
     const className = this.name;
     var properties = Object.keys(this.normative).concat(Object.keys(this.optional));
-    var classJunk = ['toJSON', 'prototype', 'toString'];
+    var classJunk = ['toJSON', 'prototype', 'toString', 'inspect'];
 
     var clazz = class extends Entity {
-      constructor(data) {
+      constructor(data, userIDComponent) {
         var p = new Proxy(data, {
           get: (target, name) => {
             if (classJunk.includes(name))
@@ -79,7 +86,7 @@ class Schema {
             return true;
           }
         });
-        super();
+        super(userIDComponent);
         this.rawData = p;
       }
 
@@ -143,6 +150,13 @@ class Schema {
     propertiesToString(this.optional, 'optional');
     return results.join('\n');
   }
+
+  toManifestString() {
+    return this.toString();
+  }
 }
 
-module.exports = Schema;
+export default Schema;
+
+import Type from './type.js';
+import Entity from './entity.js';

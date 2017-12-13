@@ -8,11 +8,11 @@
  * http://polymer.github.io/PATENTS.txt
  */
 
-let Manifest = require('../manifest.js');
-var parser = require("../build/manifest-parser.js");
-let assert = require('chai').assert;
-var fs = require("fs");
-var path = require('path');
+import Manifest from '../manifest.js';
+import parser from "../build/manifest-parser.js";
+import {assert} from './chai-web.js';
+import fs from '../../platform/fs-web.js';
+import path from '../../platform/path-web.js';
 
 async function assertRecipeParses(input, result) {
   // Strip common leading whitespace.
@@ -95,28 +95,6 @@ describe('manifest', function() {
     verify(manifest);
     verify(await Manifest.parse(manifest.toString(), {}));
   });
-  it('can resolve recipes with connections between particles', async () => {
-    let manifest = await Manifest.parse(`
-      schema S
-      particle P1
-        P1(out S x, in S y)
-      particle P2
-        P2(out S y)
-
-      recipe Connected
-        P1
-          x -> P2
-        P2
-          y -> P1.y`);
-    let verify = (manifest) => {
-      let recipe = manifest.recipes[0];
-      assert(recipe);
-      assert.equal(recipe.views.length, 2);
-      assert.equal(recipe.viewConnections.length, 4);
-    };
-    verify(manifest);
-    verify(await Manifest.parse(manifest.toString(), {}));
-  });
   it('supports recipes specified with bidirectional connections', async () => {
     let manifest = await Manifest.parse(`
       schema S
@@ -126,10 +104,10 @@ describe('manifest', function() {
         P2(out S x)
 
       recipe Bidirectional
-        P1
-          x -> P2.x
-        P2
-          x -> P1.x`);
+        P1 as p1
+          x -> p2.x
+        P2 as p2
+          x -> p1.x`);
     let verify = (manifest) => {
       let recipe = manifest.recipes[0];
       assert(recipe);
@@ -137,9 +115,9 @@ describe('manifest', function() {
       assert.equal(recipe.viewConnections.length, 2);
       assert.equal(recipe.toString(), `recipe
   ? as view0
-  P1 as particle0
+  P1 as p1
     x -> view0
-  P2 as particle1
+  P2 as p2
     x -> view0`);
     };
     verify(manifest);
@@ -476,7 +454,7 @@ describe('manifest', function() {
     assert(registry['somewhere/a path/b']);
   });
   it('parses all particles manifests', async () => {
-    let particlesPath = '../particles/';
+    let particlesPath = './particles/';
     let particleNames = fs.readdirSync(particlesPath);
     let count = 0;
     particleNames.forEach(pn => {
@@ -493,7 +471,7 @@ describe('manifest', function() {
         ++count;
       }
     })
-    assert.equal(count, 15);
+    assert.equal(count, 17);
   });
   it('loads entities from json files', async () => {
     let manifestSource = `
@@ -523,7 +501,7 @@ describe('manifest', function() {
     let manifest = await Manifest.load('the.manifest', loader);
     let view = manifest.findViewByName('View0');
     assert(view);
-    assert.deepEqual(view.toList(), [
+    assert.deepEqual(await view.toList(), [
       {
         id: 'manifest:the.manifest::0',
         rawData: {someProp: 'someValue'},
@@ -565,7 +543,7 @@ describe('manifest', function() {
       assert(false);
     } catch (e) {
       assert.deepEqual(e.message, `Parse error in 'bad-file' line 1.
-Expected " ", "#", "\\n", "\\r", [ ], [A-Z] or [a-z] but "?" found.
+Expected " ", "#", "\\n", "\\r", [ ], [A-Z], or [a-z] but "?" found.
   recipe ?
          ^`);
     }
@@ -706,5 +684,58 @@ Expected " ", "#", "\\n", "\\r", [ ], [A-Z] or [a-z] but "?" found.
     };
     verify(manifest);
     verify(await Manifest.parse(manifest.toString(), {loader}));
+  });
+  it('can parse a manifest containing shapes', async () => {
+    let manifest = await Manifest.parse(`
+      schema Foo
+      shape Shape
+        AnyThing(in Foo foo)
+      particle ShapeParticle
+        ShapeParticle(host Shape shape)
+      recipe
+        create as view0
+        ShapeParticle
+          shape = view0`);
+    assert(manifest.findShapeByName('Shape'));
+    assert(manifest.recipes[0].normalize());
+  });
+  it('can resolve optional handles', async () => {
+    let manifest = await Manifest.parse(`
+      schema Something
+      particle Thing in 'thing.js'
+        Thing(in [Something] inThing, out [Something]? maybeOutThings)
+      recipe
+        create as view0 # [Something]
+        Thing
+          inThing <- view0`);
+    let verify = (manifest) => {
+      assert.isFalse(manifest.particles[0].connections[0].isOptional);
+      assert.isTrue(manifest.particles[0].connections[1].isOptional);
+
+      let recipe = manifest.recipes[0];
+      recipe.normalize();
+      assert.isTrue(recipe.isResolved());
+    }
+    verify(manifest);
+    verify(await Manifest.parse(manifest.toString(), {}));
+  });
+  it('can resolve an immediate view specified by a particle target', async () => {
+    let manifest = await Manifest.parse(`
+      schema S
+      shape HostedShape
+        HostedShape(in S foo) 
+
+      particle Hosted
+        Hosted(in S foo, in S bar)
+
+      particle Transformation in '...js'
+        work(host HostedShape hosted)
+
+      recipe
+        Transformation
+          hosted = Hosted`);
+    let [recipe] = manifest.recipes;
+    assert(recipe.normalize());
+    assert(recipe.isResolved());
   });
 });

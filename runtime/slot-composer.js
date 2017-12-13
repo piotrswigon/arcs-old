@@ -9,9 +9,9 @@
  */
 "use strict";
 
-const assert = require('assert');
-const Slot = require('./slot.js');
-const DomSlot = require('./dom-slot.js');
+import assert from '../platform/assert-web.js';
+import Slot from './slot.js';
+import DomSlot from './dom-slot.js';
 
 class SlotComposer {
   constructor(options) {
@@ -30,7 +30,6 @@ class SlotComposer {
     }
 
     this._slots = [];
-    this._nextSlotId = 0;
   }
   get affordance() { return this._affordance; }
   getSlotClass() {
@@ -50,11 +49,44 @@ class SlotComposer {
     return this._slots.find(s => s.consumeConn.particle == particle && s.consumeConn.name == slotName);
   }
 
-  initializeRecipe(recipeParticles) {
+  createHostedSlot(transformationParticle, transformationSlotName, hostedParticleName, hostedSlotName) {
+    let hostedSlotId = this.arc.generateID();
+
+    let transformationSlot = this.getSlot(transformationParticle, transformationSlotName);
+    assert(transformationSlot,
+           `Unexpected transformation slot particle ${transformationParticle.name}:${transformationSlotName}, hosted particle ${hostedParticleName}, slot name ${hostedSlotName}`);
+    transformationSlot.addHostedSlot(hostedSlotId, hostedParticleName, hostedSlotName);
+    return hostedSlotId;
+  }
+  _findSlotByHostedSlotId(hostedSlotId) {
+    for (let slot of this._slots) {
+      let hostedSlot = slot.getHostedSlot(hostedSlotId);
+      if (hostedSlot) {
+        return slot;
+      }
+    }
+  }
+  findHostedSlot(hostedParticle, hostedSlotName) {
+    for (let slot of this._slots) {
+      let hostedSlot = slot.findHostedSlot(hostedParticle, hostedSlotName);
+      if (hostedSlot) {
+        return hostedSlot;
+      }
+    }
+  }
+
+  async initializeRecipe(recipeParticles) {
     let newSlots = [];
     // Create slots for each of the recipe's particles slot connections.
     recipeParticles.forEach(p => {
       Object.values(p.consumedSlotConnections).forEach(cs => {
+        assert(cs.targetSlot, `No target slot for particle's ${p.name} consumed slot: ${cs.name}.`);
+
+        if (this._initHostedSlot(cs.targetSlot.id, p)) {
+          // Skip slot creation for hosted slots.
+          return;
+        }
+
         let slot = new this._slotClass(cs, this.arc, this._containerKind);
         slot.startRenderCallback = this.arc.pec.startRender.bind(this.arc.pec);
         slot.stopRenderCallback = this.arc.pec.stopRender.bind(this.arc.pec);
@@ -64,8 +96,8 @@ class SlotComposer {
     });
 
     // Attempt to set context for each of the slots.
-    newSlots.forEach(s => {
-      assert(!s.context, `Unexpected context in new slot`);
+    await Promise.all(newSlots.map(async s => {
+      assert(!s.getContext(), `Unexpected context in new slot`);
 
       let context = null;
       let sourceConnection = s.consumeConn.targetSlot && s.consumeConn.targetSlot.sourceConnection;
@@ -74,36 +106,69 @@ class SlotComposer {
         if (sourceConnSlot) {
           context = sourceConnSlot.getInnerContext(s.consumeConn.name);
         }
-      } else {
+      } else {  // External slots provided at SlotComposer ctor (eg "root")
         context = this._contextById[s.consumeConn.name];
-      }
-      if (context) {
-        s.setContext(context);
       }
 
       this._slots.push(s);
-    });
+
+      if (context) {
+        await s.updateContext(context);
+      }
+    }));
   }
 
-  renderSlot(particle, slotName, content) {
+  _initHostedSlot(hostedSlotId, hostedParticle) {
+    let transformationSlot = this._findSlotByHostedSlotId(hostedSlotId);
+    if (!transformationSlot) {
+      return false;
+    }
+    transformationSlot.initHostedSlot(hostedSlotId, hostedParticle);
+    return true;
+  }
+
+  async renderSlot(particle, slotName, content) {
     let slot = this.getSlot(particle, slotName);
-    assert(slot, `Cannot find slot ${slotName} for particle ${particle.name}`);
+    if (slot) {
+      // Set the slot's new content.
+      await slot.setContent(content, eventlet => {
+        this.arc.pec.sendEvent(particle, slotName, eventlet)
+        this.arc.makeSuggestions && this.arc.makeSuggestions();
+      });
+      return;
+    }
 
-    // Set the slot's new content.
-    slot.setContent(content, eventlet => this.arc.pec.sendEvent(particle, slotName, eventlet));
+    if (this._renderHostedSlot(particle, slotName, content)) {
+      return;
+    }
+
+    assert(slot, `Cannot find slot (or hosted slot) ${slotName} for particle ${particle.name}`);
   }
 
-  updateInnerSlots(slot) {
+  _renderHostedSlot(particle, slotName, content) {
+    let hostedSlot = this.findHostedSlot(particle, slotName);
+    if (!hostedSlot) {
+      return false;
+    }
+    let transformationSlot = this._findSlotByHostedSlotId(hostedSlot.slotId);
+    assert(transformationSlot, `No transformation slot found for ${hostedSlot.slotId}`);
+
+    this.arc.pec.innerArcRender(transformationSlot.consumeConn.particle, transformationSlot.consumeConn.name, hostedSlot.slotId, content);
+
+    return true;
+  }
+
+  async updateInnerSlots(slot) {
     assert(slot, 'Cannot update inner slots of null');
     // Update provided slot contexts.
-    Object.keys(slot.consumeConn.providedSlots).forEach(providedSlotName => {
+    await Promise.all(Object.keys(slot.consumeConn.providedSlots).map(async providedSlotName => {
       let providedContext = slot.getInnerContext(providedSlotName);
       let providedSlot = slot.consumeConn.providedSlots[providedSlotName];
-      providedSlot.consumeConnections.forEach(cc => {
+      await Promise.all(providedSlot.consumeConnections.map(async cc => {
         // This will trigger "start" or "stop" render, if applicable.
-        this.getSlot(cc.particle, cc.name).setContext(providedContext);
-      });
-    });
+        await this.getSlot(cc.particle, cc.name).updateContext(providedContext);
+      }));
+    }));
   }
 
   getAvailableSlots() {
@@ -114,7 +179,7 @@ class SlotComposer {
         if (!availableSlots[ps.name]) {
           availableSlots[ps.name] = [];
         }
-        let psId = ps.id || `slotid-${this._nextSlotId++}`;
+        let psId = ps.id || `slotid-${this.arc.generateID()}`;
         ps.id = psId;
         let providedSlotSpec = slot.consumeConn.slotSpec.providedSlots.find(psSpec => psSpec.name == ps.name);
         availableSlots[ps.name].push({
@@ -136,4 +201,4 @@ class SlotComposer {
   }
 }
 
-module.exports = SlotComposer;
+export default SlotComposer;
