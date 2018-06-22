@@ -31,6 +31,7 @@ import {CreateHandles} from './strategies/create-handles.js';
 import {CreateHandleGroup} from './strategies/create-handle-group.js';
 import {CombinedStrategy} from './strategies/combined-strategy.js';
 import {ResolveRecipe} from './strategies/resolve-recipe.js';
+import {CoalesceRecipes} from './strategies/coalesce-recipes.js';
 import {Speculator} from './speculator.js';
 import {Tracing} from '../tracelib/trace.js';
 import {StrategyExplorerAdapter} from './debug/strategy-explorer-adapter.js';
@@ -226,7 +227,8 @@ Planner.ResolutionStrategies = [
   AddUseHandles,
   CreateDescriptionHandle,
   MatchFreeHandlesToConnections,
-  ResolveRecipe
+  ResolveRecipe,
+  CoalesceRecipes
 ];
 
 Planner.AllStrategies = Planner.InitializationStrategies.concat(Planner.ResolutionStrategies);
